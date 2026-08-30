@@ -18,7 +18,7 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Build App
+      - name: Build Executable
         run: |
           xcodebuild clean build \
             -scheme BlueStore \
@@ -28,25 +28,54 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Package to IPA
+      - name: Create .app Bundle and Package to IPA
         run: |
-          # 1. Находим скомпилированное .app приложение в любой подпапке build
-          APP_PATH=$(find build -name "*.app" | head -n 1)
+          # 1. Находим скомпилированный исполняемый файл (бинарник)
+          EXEC_PATH=$(find build/Build/Products -name "BlueStore" -type f ! -name "*.swiftmodule" | head -n 1)
 
-          if [ -z "$APP_PATH" ]; then
-            echo "::error::Приложение .app не найдено в папке build!"
-            echo "=== Содержимое папки build ==="
-            find build -maxdepth 4
+          if [ -z "$EXEC_PATH" ]; then
+            echo "::error::Бинарный файл BlueStore не найден!"
             exit 1
           fi
 
-          echo "Найдено приложение: $APP_PATH"
+          echo "Found executable at: $EXEC_PATH"
 
-          # 2. Создаем Payload и копируем .app
-          mkdir -p Payload
-          cp -R "$APP_PATH" Payload/
+          # 2. Создаем структуру .app внутри Payload
+          mkdir -p Payload/BlueStore.app
 
-          # 3. Упаковываем в .ipa
+          # 3. Копируем исполняемый файл
+          cp "$EXEC_PATH" Payload/BlueStore.app/BlueStore
+          chmod +x Payload/BlueStore.app/BlueStore
+
+          # 4. Создаем Info.plist, если его нет
+          if [ -f "build/info.plist" ]; then
+            cp "build/info.plist" Payload/BlueStore.app/Info.plist
+          else
+            cat <<EOF > Payload/BlueStore.app/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>BlueStore</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.example.bluestore</string>
+              <key>CFBundleName</key>
+              <string>BlueStore</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>MinimumOSVersion</key>
+              <string>15.0</string>
+          </dict>
+          </plist>
+          EOF
+          fi
+
+          # 5. Упаковываем в .ipa
           zip -r -9 app-release.ipa Payload
 
       - name: Upload IPA Artifact
