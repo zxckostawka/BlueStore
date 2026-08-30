@@ -1,4 +1,4 @@
-name: Build IPA for TrollStore & SideStore
+name: Build iOS IPA (TrollStore / SideStore / AltStore)
 
 on:
   push:
@@ -7,22 +7,57 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14 # Apple Silicon (M1/M2)runner для быстрой сборки
+    runs-on: macos-14
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Inspect repository structure (Debug)
+        run: |
+          echo "=== Workdir ==="
+          pwd
+          echo "=== Root Files ==="
+          ls -la
+          echo "=== Xcode Projects Found ==="
+          find . -maxdepth 3 \( -name "*.xcodeproj" -o -name "*.xcworkspace" -o -name "*.swiftpm" \)
+
+      - name: Select Xcode Version
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
-      - name: Build App
+      - name: Build App to IPA
         run: |
+          # 1. Находим проект
+          PROJECT_PATH=$(find . -maxdepth 3 \( -name "*.xcodeproj" -o -name "*.xcworkspace" -o -name "Package.swift" \) | head -n 1)
+
+          if [ -z "$PROJECT_PATH" ]; then
+            echo "::error::Не найден проект Xcode (.xcodeproj, .xcworkspace или Package.swift)!"
+            exit 1
+          fi
+
+          echo "Found project at: $PROJECT_PATH"
+
+          # 2. Определяем параметры сборки в зависимости от типа проекта
+          if [[ "$PROJECT_PATH" == *.xcworkspace ]]; then
+            BUILD_ARGS="-workspace $PROJECT_PATH"
+            SCHEME=$(xcodebuild -workspace "$PROJECT_PATH" -list -json | jq -r '.workspace.schemes[0]')
+          elif [[ "$PROJECT_PATH" == *.xcodeproj ]]; then
+            BUILD_ARGS="-project $PROJECT_PATH"
+            SCHEME=$(xcodebuild -project "$PROJECT_PATH" -list -json | jq -r '.project.schemes[0]')
+          else
+            # Swift Package / Playgrounds (.swiftpm / Package.swift)
+            BUILD_ARGS=""
+            SCHEME=$(xcodebuild -list -json | jq -r '.project.schemes[0] // .workspace.schemes[0]')
+          fi
+
+          echo "Using scheme: $SCHEME"
+
+          # 3. Собираем проект без подписи
           xcodebuild clean build \
-            -project *.xcodeproj \
-            -scheme "$(xcodebuild -list -json | jq -r '.project.schemes[0]')" \
+            $BUILD_ARGS \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -30,18 +65,21 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Create IPA Structure
-        run: |
+          # 4. Упаковываем в .ipa для TrollStore / SideStore
           mkdir -p Payload
-          # Находим скомпилированное .app приложение и копируем его в Payload
           APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Скомпилированное .app приложение не найдено в DerivedData!"
+            exit 1
+          fi
+
+          echo "Packaging application from: $APP_PATH"
           cp -R "$APP_PATH" Payload/
-          
-          # Упаковываем в .ipa
           zip -r -9 app-release.ipa Payload
 
-      - name: Upload Artifact
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TrollStore-SideStore-App
+          name: app-release
           path: app-release.ipa
