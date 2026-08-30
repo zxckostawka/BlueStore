@@ -30,12 +30,26 @@ jobs:
 
       - name: Package to IPA
         run: |
+          # 1. Находим скомпилированное .app приложение в любой подпапке build
+          APP_PATH=$(find build -name "*.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Приложение .app не найдено в папке build!"
+            echo "=== Содержимое папки build ==="
+            find build -maxdepth 4
+            exit 1
+          fi
+
+          echo "Найдено приложение: $APP_PATH"
+
+          # 2. Создаем Payload и копируем .app
           mkdir -p Payload
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
           cp -R "$APP_PATH" Payload/
+
+          # 3. Упаковываем в .ipa
           zip -r -9 app-release.ipa Payload
 
-      - name: Upload IPA
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release
